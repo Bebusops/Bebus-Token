@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+// SafeMath Library
+library SafeMath {
+    function safeAdd(uint a, uint b) internal pure returns (uint c) {
+        c = a + b;
+        require(c >= a, "SafeMath: addition overflow");
+    }
+
+    function safeSub(uint a, uint b) internal pure returns (uint c) {
+        require(b <= a, "SafeMath: subtraction overflow");
+        c = a - b;
+    }
+
+    function safeMul(uint a, uint b) internal pure returns (uint c) {
+        c = a * b;
+        require(a == 0 || c / a == b, "SafeMath: multiplication overflow");
+    }
+
+    function safeDiv(uint a, uint b) internal pure returns (uint c) {
+        require(b > 0, "SafeMath: division by zero");
+        c = a / b;
+    }
+}
+
+// ERC Token Standard #20 Interface
+interface ERC20Interface {
+    function totalSupply() external view returns (uint);
+    function balanceOf(address tokenOwner) external view returns (uint balance);
+    function allowance(address tokenOwner, address spender) external view returns (uint remaining);
+    function transfer(address to, uint tokens) external returns (bool success);
+    function approve(address spender, uint tokens) external returns (bool success);
+    function transferFrom(address from, address to, uint tokens) external returns (bool success);
+
+    event Transfer(address indexed from, address indexed to, uint tokens);
+    event Approval(address indexed tokenOwner, address indexed spender, uint tokens);
+}
+
+// Contract function to receive approval and execute function in one call
+interface ApproveAndCallFallBack {
+    function receiveApproval(address from, uint256 tokens, address token, bytes calldata data) external;
+}
+
+// Actual token contract
+contract BebusToken is ERC20Interface {
+    using SafeMath for uint;
+
+    string public symbol;
+    string public  name;
+    uint8 public decimals;
+    uint public constant _totalSupply = 2000000000 * 10**18; // 2 billion tokens
+
+    mapping(address => uint) balances;
+    mapping(address => mapping(address => uint)) allowed;
+    mapping(address => bool) public isBPOProvider;
+    mapping(address => uint) public stakedAmount;
+    uint public totalStaked;
+    mapping(address => uint) public savingsBalance;
+    mapping(address => bool) public isCommunityMember;
+    mapping(address => uint) public gameScores;
+    mapping(address => bool) public isAthlete;
+
+    constructor() {
+        symbol = "Bebus";
+        name = "Bebus Token";
+        decimals = 18;
+        balances[msg.sender] = _totalSupply;
+        emit Transfer(address(0), msg.sender, _totalSupply);
+    }
+
+    function totalSupply() external pure override returns (uint) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address tokenOwner) external view override returns (uint balance) {
+        return balances[tokenOwner];
+    }
+
+    function transfer(address to, uint tokens) external override returns (bool success) {
+        balances[msg.sender] = balances[msg.sender].safeSub(tokens);
+        balances[to] = balances[to].safeAdd(tokens);
+        emit Transfer(msg.sender, to, tokens);
+        return true;
+    }
+
+    function approve(address spender, uint tokens) external override returns (bool success) {
+        allowed[msg.sender][spender] = tokens;
+        emit Approval(msg.sender, spender, tokens);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint tokens) external override returns (bool success) {
+        balances[from] = balances[from].safeSub(tokens);
+        allowed[from][msg.sender] = allowed[from][msg.sender].safeSub(tokens);
+        balances[to] = balances[to].safeAdd(tokens);
+        emit Transfer(from, to, tokens);
+        return true;
+    }
+
+    function allowance(address tokenOwner, address spender) external view override returns (uint remaining) {
+        return allowed[tokenOwner][spender];
+    }
+
+    function approveAndCall(address spender, uint tokens, bytes calldata data) external returns (bool success) {
+        allowed[msg.sender][spender] = tokens;
+        emit Approval(msg.sender, spender, tokens);
+        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, address(this), data);
+        return true;
+    }
+
+    receive() external payable {
+        revert("BebusToken: does not accept Ether directly");
+    }
+
+    // Business Process Outsourcing (BPO) Module
+    function registerAsBPOProvider() external {
+        isBPOProvider[msg.sender] = true;
+    }
+
+    // Staking Module
+    function stake(uint amount) external {
+        require(balances[msg.sender] >= amount, "BebusToken: Insufficient balance");
+        balances[msg.sender] = balances[msg.sender].safeSub(amount);
+        balances[address(this)] = balances[address(this)].safeAdd(amount);
+        stakedAmount[msg.sender] = stakedAmount[msg.sender].safeAdd(amount);
+        totalStaked = totalStaked.safeAdd(amount);
+    }
+
+    function unstake(uint amount) external {
+        require(stakedAmount[msg.sender] >= amount, "BebusToken: Insufficient staked amount");
+        stakedAmount[msg.sender] = stakedAmount[msg.sender].safeSub(amount);
+        totalStaked = totalStaked.safeSub(amount);
+        balances[msg.sender] = balances[msg.sender].safeAdd(amount);
+        balances[address(this)] = balances[address(this)].safeSub(amount);
+    }
+
+    // Savings Module
+    function depositToSavings(uint amount) external {
+        require(balances[msg.sender] >= amount, "BebusToken: Insufficient balance");
+        balances[msg.sender] = balances[msg.sender].safeSub(amount);
+        savingsBalance[msg.sender] = savingsBalance[msg.sender].safeAdd(amount);
+    }
+
+    function withdrawFromSavings(uint amount) external {
+        require(savingsBalance[msg.sender] >= amount, "BebusToken: Insufficient savings balance");
+        savingsBalance[msg.sender] = savingsBalance[msg.sender].safeSub(amount);
+        balances[msg.sender] = balances[msg.sender].safeAdd(amount);
+    }
+
+    // Advanced Utility Token Functions
+    function increaseAllowance(address spender, uint addedValue) external returns (bool) {
+        uint newValue = allowed[msg.sender][spender].safeAdd(addedValue);
+        _approve(msg.sender, spender, newValue);
+        return true;
+    }
+
+    function decreaseAllowance(address spender, uint subtractedValue) external returns (bool) {
+        uint oldValue = allowed[msg.sender][spender];
+        require(oldValue >= subtractedValue, "BebusToken: decreased allowance below zero");
+        uint newValue = oldValue.safeSub(subtractedValue);
+        _approve(msg.sender, spender, newValue);
+        return true;
+    }
+
+    function _approve(address owner, address spender, uint amount) internal {
+        require(owner != address(0), "BebusToken: approve from the zero address");
+        require(spender != address(0), "BebusToken: approve to the zero address");
+        allowed[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+
+    // Games Module (Contact Game Logic)
+    function playGame(uint score) external {
+        gameScores[msg.sender] = score;
+    }
+
+    // Interactions with Financial Apps, Exchanges, and Communication Apps
+    function interactWithFinancialApp() external pure returns (string memory) {
+        return "Interacted with Financial App";
+    }
+
+    function interactWithExchange() external pure returns (string memory) {
+        return "Interacted with Exchange";
+    }
+
+    function interactWithCommunicationApp() external pure returns (string memory) {
+        return "Interacted with Communication App";
+    }
+
+    // Sports Module (Contact Sports Related Logic)
+    function becomeAthlete() external {
+        isAthlete[msg.sender] = true;
+    }
+
+    // Community Module
+    function joinCommunity() external {
+        isCommunityMember[msg.sender] = true;
+    }
+
+    function leaveCommunity() external {
+        isCommunityMember[msg.sender] = false;
+    }
+}
